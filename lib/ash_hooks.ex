@@ -41,6 +41,46 @@ defmodule AshHooks do
   walks the ordered transition (ADR-0011).
   """
 
+  @attribute %Spark.Dsl.Entity{
+    name: :attribute,
+    args: [:name, :type],
+    target: AshHooks.Inbound.Attribute,
+    describe: "Declares a typed inbound webhook attribute.",
+    schema: [
+      name: [type: :atom, required: true],
+      type: [type: :any, required: true],
+      allow_nil?: [type: :boolean, default: true],
+      default: [type: :any, default: nil],
+      constraints: [type: :any, default: []]
+    ]
+  }
+
+  @event %Spark.Dsl.Entity{
+    name: :event,
+    args: [:type],
+    target: AshHooks.Inbound.Event,
+    transform: {AshHooks.Inbound.Event, :transform, []},
+    describe: "Declares a typed inbound webhook event.",
+    schema: [
+      type: [type: :string, required: true],
+      action: [
+        type: :any,
+        required: true,
+        doc:
+          "The Ash action to invoke. Use an atom for the current resource or " <>
+            "a `{resource, action}` tuple for an action owned by another Ash resource."
+      ],
+      record: [
+        type: :atom,
+        default: nil,
+        doc:
+          "For an update action, the inbound attribute containing the target " <>
+            "record's primary-key value."
+      ]
+    ],
+    entities: [attributes: @attribute]
+  }
+
   @inbound %Spark.Dsl.Entity{
     name: :inbound,
     args: [:name],
@@ -87,6 +127,30 @@ defmodule AshHooks do
         closed rather than falling back to the digest.
         """
       ],
+      identity: [
+        type: :atom,
+        doc: "A shared typed attribute used as the external event identity."
+      ],
+      route: [
+        type: :string,
+        doc: "Optional relative HTTP route. Defaults to the resource and inbound names."
+      ],
+      signature_header: [
+        type: :string,
+        default: "webhook-signature",
+        doc: "The HTTP header carrying the provider signature."
+      ],
+      secret_route: [
+        type: {:or, [{:literal, false}, :string]},
+        default: false,
+        doc: "Optional AshJsonApi GET route for staff-only organization secret retrieval."
+      ],
+      secret_resolver: [
+        type: :any,
+        default: nil,
+        doc:
+          "Callback used by the generated AshJsonApi secret action. It receives organization_id, inbound name, and Ash action context."
+      ],
       replay_window_seconds: [
         type: :pos_integer,
         doc: """
@@ -99,7 +163,8 @@ defmodule AshHooks do
         for scheme-specific enforcement.
         """
       ]
-    ]
+    ],
+    entities: [attributes: @attribute, events: @event]
   }
 
   @outbound %Spark.Dsl.Entity{
@@ -157,8 +222,10 @@ defmodule AshHooks do
     sections: [@webhooks],
     verifiers: [
       AshHooks.Verifiers.ReplayWindowRequiresTimestamp,
+      AshHooks.Verifiers.InboundEvents,
       AshHooks.Verifiers.OutboundReferences
-    ]
+    ],
+    transformers: [AshHooks.Transformers.AddJsonApiSecretRoutes]
 
   alias Ash.Resource.Info, as: ResourceInfo
   alias AshHooks.{Delivery, InboundDelivery, Ingress, OutboundDelivery}

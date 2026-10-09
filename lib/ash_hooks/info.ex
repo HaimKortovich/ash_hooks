@@ -17,6 +17,24 @@ defmodule AshHooks.Info do
     webhooks(resource) |> Enum.find(&(is_struct(&1, AshHooks.Inbound) and &1.name == provider))
   end
 
+  @doc "Returns the typed events declared for an inbound webhook."
+  @spec inbound_events(module(), atom()) :: [AshHooks.Inbound.Event.t()]
+  def inbound_events(resource, name) do
+    case inbound(resource, name) do
+      %AshHooks.Inbound{events: events} -> events
+      nil -> []
+    end
+  end
+
+  @doc "Returns the inbound event matching a parsed atom or wire type."
+  @spec inbound_event(module(), atom(), atom() | String.t()) :: AshHooks.Inbound.Event.t() | nil
+  def inbound_event(resource, name, type) do
+    case inbound(resource, name) do
+      %AshHooks.Inbound{} = inbound -> AshHooks.Inbound.event(inbound, type)
+      nil -> nil
+    end
+  end
+
   @doc "The outbound declaration for `event`, if any."
   @spec outbound(Ash.Resource.t(), atom()) :: AshHooks.Outbound.t() | nil
   def outbound(resource, event) do

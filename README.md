@@ -109,6 +109,30 @@ webhooks do
 end
 ```
 
+For typed provider events, declare the shared identity and event payload on
+the resource. The wire type is declared once; its snake-case event name is
+derived automatically. Event actions are generic Ash actions on the same
+resource, so there is no implicit record lookup:
+
+```elixir
+webhooks do
+  inbound :provider_events do
+    secret {:app_env, [:my_app, :provider_secret]}
+    identity :execution_id
+    attribute :execution_id, :string, allow_nil?: false
+
+    event "quote.completed" do
+      action :complete_provider_execution
+      attribute :quote_id, :string, allow_nil?: false
+    end
+  end
+end
+```
+
+The declared attributes are cast and constrained with Ash types before the
+action runs. Existing provider `handle_event/2` declarations remain the
+fallback for wire types without a typed event declaration.
+
 Secrets are always sources — an `{m, f, a}` callback, an
 `{:app_env, path}`, a zero-arity function, or (multi-tenant apps) a
 one-arity function that receives the tenant — never literal values.

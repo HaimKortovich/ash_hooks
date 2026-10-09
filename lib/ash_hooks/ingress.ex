@@ -50,7 +50,7 @@ defmodule AshHooks.Ingress do
   alias AshHooks.Errors.Invalid.MalformedPayload
   alias AshHooks.Errors.Invalid.NoWebhookSecret
   alias AshHooks.Errors.Unknown.UnknownError
-  alias AshHooks.{Info, PrimaryKey, Provider, Tenancy}
+  alias AshHooks.{Info, Inbound, PrimaryKey, Provider, Tenancy}
   alias Spark.Dsl.Extension
 
   @typedoc """
@@ -595,7 +595,7 @@ defmodule AshHooks.Ingress do
     tenant = env[:tenant]
 
     with {:ok, type} <- env.parsed_type,
-         {:ok, _event} <- env.provider.handle_event(type, env.payload) do
+         {:ok, _event} <- handle_event(resource, env, type) do
       gated_update(resource, delivery_id, claimed.fencing_token, :mark_processed, %{}, tenant)
     else
       {:error, :unknown_event_type} ->
@@ -647,6 +647,63 @@ defmodule AshHooks.Ingress do
     end
   end
 
+  defp handle_event(resource, %{inbound: %Inbound{} = inbound} = env, type) do
+    case Inbound.event(inbound, type) do
+      nil ->
+        env.provider.handle_event(type, env.payload)
+
+      event ->
+        with {:ok, arguments} <- Inbound.Validator.validate(inbound, event, env.payload),
+             {:ok, result} <- run_event_action(resource, event, arguments, env.tenant) do
+          {:ok, result}
+        else
+          {:error, {:invalid_attribute, _name, _reason} = error} ->
+            {:error, :permanent, error}
+
+          {:error, :malformed_payload} = error ->
+            {:error, :permanent, error}
+
+          {:error, error} ->
+            {:error, :retry, error}
+        end
+    end
+  end
+
+  defp handle_event(_resource, env, type),
+    do: env.provider.handle_event(type, env.payload)
+
+  defp run_event_action(resource, event, arguments, tenant) do
+    {action_resource, action_name} = action_target(resource, event.action)
+
+    case Ash.Resource.Info.action(action_resource, action_name).type do
+      :update when not is_nil(event.record) ->
+        with {:ok, record} <-
+               Ash.get(action_resource, Map.fetch!(arguments, event.record),
+                 tenant: tenant,
+                 authorize?: false
+               ) do
+          Ash.update(
+            record,
+            Map.delete(arguments, event.record),
+            action: action_name,
+            authorize?: false,
+            tenant: tenant
+          )
+        end
+
+      _ ->
+        input =
+          Ash.ActionInput.for_action(action_resource, action_name, arguments, tenant: tenant)
+
+        Ash.run_action(input, authorize?: false, tenant: tenant)
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  defp action_target(resource, action) when is_atom(action), do: {resource, action}
+  defp action_target(_resource, {action_resource, action}), do: {action_resource, action}
+
   # The handling env for a claimed row is rebuilt from the PERSISTED row —
   # payload, digest, and type come from the ledger of record, so a
   # byte-differing redelivery under the same identity can never process
@@ -660,7 +717,7 @@ defmodule AshHooks.Ingress do
         digest: row.payload_digest,
         external_event_id: row.external_event_id,
         parsed_type: parsed_type,
-        type_string: type_string(parsed_type)
+        type_string: type_string(env.inbound, parsed_type)
     }
   end
 
@@ -841,7 +898,7 @@ defmodule AshHooks.Ingress do
            digest: digest,
            external_event_id: external_event_id,
            parsed_type: parsed_type,
-           type_string: type_string(parsed_type),
+           type_string: type_string(inbound, parsed_type),
            scope: declared_scope(resource, ctx),
            tenant: ctx[:tenant]
          }}
@@ -1069,6 +1126,24 @@ defmodule AshHooks.Ingress do
     {:ok, id}
   end
 
+  defp external_event_id(%{identity: identity}, _provider, payload, _digest, name)
+       when is_atom(identity) and not is_nil(identity) do
+    case payload_value(payload, identity) do
+      value when is_binary(value) and value != "" and byte_size(value) <= 255 ->
+        {:ok, value}
+
+      value when is_binary(value) and value != "" ->
+        {:ok, content_digest(value)}
+
+      _missing_or_invalid ->
+        {:error,
+         MalformedPayload.exception(
+           provider: name,
+           detail: "identity attribute #{inspect(identity)} is missing or invalid"
+         )}
+    end
+  end
+
   defp external_event_id(_inbound, provider, payload, digest, name) do
     case Provider.event_identity(provider, payload) do
       :not_supported ->
@@ -1082,6 +1157,12 @@ defmodule AshHooks.Ingress do
     end
   end
 
+  defp payload_value(payload, key) when is_map(payload) do
+    Map.get(payload, Atom.to_string(key), Map.get(payload, key))
+  end
+
+  defp payload_value(_payload, _key), do: nil
+
   defp provider_identity_error(name) do
     {:error,
      MalformedPayload.exception(
@@ -1092,6 +1173,15 @@ defmodule AshHooks.Ingress do
 
   defp type_string({:ok, type}) when is_atom(type), do: Atom.to_string(type)
   defp type_string(_), do: nil
+
+  defp type_string(%Inbound{} = inbound, {:ok, type}) do
+    case Inbound.event(inbound, type) do
+      %AshHooks.Inbound.Event{type: wire_type} -> wire_type
+      _ -> type_string({:ok, type})
+    end
+  end
+
+  defp type_string(_inbound, parsed_type), do: type_string(parsed_type)
 
   # error_class is a bounded classification field, never an arbitrary dump:
   # binaries truncate, atoms name themselves, and structures (which can carry
@@ -1105,6 +1195,10 @@ defmodule AshHooks.Ingress do
   end
 
   defp error_class_string(term) when is_atom(term), do: Atom.to_string(term)
+
+  defp error_class_string({:invalid_attribute, name, _reason}) when is_atom(name),
+    do: "invalid_attribute:#{name}"
+
   defp error_class_string(_term), do: "unclassified"
 
   # Second-truncated UTC: sqlite stores TEXT ISO8601 and compares lexically —

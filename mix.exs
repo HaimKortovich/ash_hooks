@@ -96,6 +96,7 @@ defmodule AshHooks.MixProject do
       # 3.34.3 fixes CVE-2026-94201 and supplies the tenant inverse API
       # used by the worker. Older releases are not a supported consumer graph.
       {:ash, ">= 3.34.3 and < 4.0.0-0"},
+      {:ash_json_api, git: "git@github.com:HaimKortovich/ash_json_api.git", branch: "main"},
       {:splode, "~> 0.3"},
       {:spark, ">= 2.3.3 and < 3.0.0-0"},
       {:jason, "~> 1.2"},

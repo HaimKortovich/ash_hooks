@@ -30,6 +30,15 @@ defmodule AshHooks.IngressTest do
 
     actions do
       defaults([:read])
+
+      action :complete, :map do
+        argument :execution_id, :string, allow_nil?: false
+        argument :quote_id, :string, allow_nil?: false
+
+        run fn input, _context ->
+          {:ok, input.arguments}
+        end
+      end
     end
 
     webhooks do
@@ -37,6 +46,18 @@ defmodule AshHooks.IngressTest do
         provider(AshHooks.CountingProvider)
         secret {AshHooks.IngressTest, :secret, []}
         event_id(&__MODULE__.event_id/1)
+      end
+
+      inbound :typed do
+        provider(AshHooks.IngressTest.TypedProvider)
+        secret {AshHooks.IngressTest, :secret, []}
+        identity(:execution_id)
+        attribute :execution_id, :string, allow_nil?: false
+
+        event "quote.completed" do
+          action :complete
+          attribute :quote_id, :string, allow_nil?: false
+        end
       end
 
       inbound :hashback do
@@ -101,6 +122,23 @@ defmodule AshHooks.IngressTest do
 
     @impl Provider
     defdelegate handle_event(type, payload), to: AshHooks.CountingProvider
+  end
+
+  defmodule TypedProvider do
+    @moduledoc false
+    @behaviour AshHooks.Provider
+
+    alias AshHooks.Provider
+
+    @impl Provider
+    def verify_signature(raw_body, ctx, secret),
+      do: Provider.default_verify_signature(raw_body, ctx.signature, secret, :hmac_sha256)
+
+    @impl Provider
+    defdelegate parse_event_type(payload), to: AshHooks.CountingProvider
+
+    @impl Provider
+    def handle_event(_event_type, _payload), do: {:error, :legacy_handler_called}
   end
 
   defmodule Domain do
@@ -228,6 +266,30 @@ defmodule AshHooks.IngressTest do
   end
 
   describe "sync pipeline" do
+    test "a typed inbound event validates and invokes the declared Ash action" do
+      raw =
+        Jason.encode!(%{
+          "execution_id" => "exec-1",
+          "type" => "quote_completed",
+          "quote_id" => "quote-1"
+        })
+
+      assert {:ok, :created, delivery} = Ingress.ingest(Ledger, :typed, raw, ctx(raw))
+
+      assert delivery.status == :processed
+      assert delivery.external_event_id == "exec-1"
+      assert delivery.external_event_type == "quote.completed"
+    end
+
+    test "invalid typed attributes are recorded as permanent failures" do
+      raw = Jason.encode!(%{"execution_id" => "exec-2", "type" => "quote_completed"})
+
+      assert {:ok, :created, delivery} = Ingress.ingest(Ledger, :typed, raw, ctx(raw))
+
+      assert delivery.status == :failed_permanent
+      assert delivery.error_class =~ "invalid_attribute"
+    end
+
     test "a verified delivery is persisted, claimed, handled, and marked processed" do
       raw = body()
 

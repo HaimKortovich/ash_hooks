@@ -51,6 +51,9 @@ resource.
 
 ### Nested DSLs
  * [inbound](#webhooks-inbound)
+   * attribute
+   * event
+     * attribute
  * [outbound](#webhooks-outbound)
 
 
@@ -67,6 +70,10 @@ Declares an inbound webhook source — a provider whose deliveries this
 resource receives, verifies, deduplicates, and handles.
 
 
+### Nested DSLs
+ * [attribute](#webhooks-inbound-attribute)
+ * [event](#webhooks-inbound-event)
+   * attribute
 
 
 
@@ -83,8 +90,110 @@ resource receives, verifies, deduplicates, and handles.
 | [`secret`](#webhooks-inbound-secret){: #webhooks-inbound-secret .spark-required} | `any` |  | The signing-secret source: an `{M, f, a}` callback, `{:app_env, path}`, a 0-arity function (app-global), or a 1-arity function (`tenant -> {:ok, secret} \| {:error, :no_webhook_secret}` — resolves the TENANT's secret on multitenant ledgers; arity dispatch on literal fns is unambiguous). A literal binary is rejected at parse time (ADR-0005). Scope: this net catches the secret passed AS the option value; arguments of an MFA source are the consumer's own code. |
 | [`provider`](#webhooks-inbound-provider){: #webhooks-inbound-provider } | `atom` |  | The provider MODULE implementing `AshHooks.Provider`. When unset, the ingress resolves `AshHooks.Provider.<Camelized(name)>` and fails closed when that module does not exist or does not implement the behavior. |
 | [`event_id`](#webhooks-inbound-event_id){: #webhooks-inbound-event_id } | `any` |  | Extractor for the provider's external event id from the decoded payload (`payload -> {:ok, id} \| :error`). This explicit extractor takes precedence over the provider's optional `event_identity/1`. Without either, the raw request-body digest supplies the identity. A provider callback error fails closed rather than falling back to the digest. |
+| [`identity`](#webhooks-inbound-identity){: #webhooks-inbound-identity } | `atom` |  | A shared typed attribute used as the external event identity. |
 | [`replay_window_seconds`](#webhooks-inbound-replay_window_seconds){: #webhooks-inbound-replay_window_seconds } | `pos_integer` |  | Replay-protection window for providers whose scheme carries a trustworthy timestamp (e.g. HubSpot v3). Providers without timestamps (e.g. ComplyCube) MUST leave this unset — the verifier rejects a window whose provider declares no timestamp header (`AshHooks.Provider.timestamp_header/1` returns nil). The window value is passed to the provider's `verify_signature/3` in the context map for scheme-specific enforcement. |
 
+
+### webhooks.inbound.attribute
+```elixir
+attribute name, type
+```
+
+
+Declares a typed inbound webhook attribute.
+
+
+
+
+
+### Arguments
+
+| Name | Type | Default | Docs |
+|------|------|---------|------|
+| [`name`](#webhooks-inbound-attribute-name){: #webhooks-inbound-attribute-name .spark-required} | `atom` |  |  |
+| [`type`](#webhooks-inbound-attribute-type){: #webhooks-inbound-attribute-type .spark-required} | `any` |  |  |
+### Options
+
+| Name | Type | Default | Docs |
+|------|------|---------|------|
+| [`allow_nil?`](#webhooks-inbound-attribute-allow_nil?){: #webhooks-inbound-attribute-allow_nil? } | `boolean` | `true` |  |
+| [`default`](#webhooks-inbound-attribute-default){: #webhooks-inbound-attribute-default } | `any` |  |  |
+| [`constraints`](#webhooks-inbound-attribute-constraints){: #webhooks-inbound-attribute-constraints } | `any` | `[]` |  |
+
+
+
+
+
+### Introspection
+
+Target: `AshHooks.Inbound.Attribute`
+
+### webhooks.inbound.event
+```elixir
+event type
+```
+
+
+Declares a typed inbound webhook event.
+
+### Nested DSLs
+ * [attribute](#webhooks-inbound-event-attribute)
+
+
+
+
+### Arguments
+
+| Name | Type | Default | Docs |
+|------|------|---------|------|
+| [`type`](#webhooks-inbound-event-type){: #webhooks-inbound-event-type .spark-required} | `String.t` |  |  |
+### Options
+
+| Name | Type | Default | Docs |
+|------|------|---------|------|
+| [`action`](#webhooks-inbound-event-action){: #webhooks-inbound-event-action .spark-required} | `atom` |  | The Ash action on the current resource to invoke. |
+
+
+### webhooks.inbound.event.attribute
+```elixir
+attribute name, type
+```
+
+
+Declares a typed inbound webhook attribute.
+
+
+
+
+
+### Arguments
+
+| Name | Type | Default | Docs |
+|------|------|---------|------|
+| [`name`](#webhooks-inbound-event-attribute-name){: #webhooks-inbound-event-attribute-name .spark-required} | `atom` |  |  |
+| [`type`](#webhooks-inbound-event-attribute-type){: #webhooks-inbound-event-attribute-type .spark-required} | `any` |  |  |
+### Options
+
+| Name | Type | Default | Docs |
+|------|------|---------|------|
+| [`allow_nil?`](#webhooks-inbound-event-attribute-allow_nil?){: #webhooks-inbound-event-attribute-allow_nil? } | `boolean` | `true` |  |
+| [`default`](#webhooks-inbound-event-attribute-default){: #webhooks-inbound-event-attribute-default } | `any` |  |  |
+| [`constraints`](#webhooks-inbound-event-attribute-constraints){: #webhooks-inbound-event-attribute-constraints } | `any` | `[]` |  |
+
+
+
+
+
+### Introspection
+
+Target: `AshHooks.Inbound.Attribute`
+
+
+
+
+### Introspection
+
+Target: `AshHooks.Inbound.Event`
 
 
 
